@@ -1,6 +1,7 @@
 package com.prod.secureestatebackend.controller;
 
 import com.prod.secureestatebackend.dto.*;
+import com.prod.secureestatebackend.service.FraudDetectionService.FraudDetectionResult;
 import com.prod.secureestatebackend.service.AdminService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -48,6 +49,13 @@ public class AdminController {
     @GetMapping("/properties")
     public ResponseEntity<List<PropertyResponse>> getAllProperties() {
         return ResponseEntity.ok(adminService.getAllProperties());
+    }
+
+    // ─── Fraud Scan (preview before saving) ─────────────────────
+    @PostMapping("/properties/scan")
+    public ResponseEntity<FraudDetectionResult> scanProperty(
+            @RequestBody PropertyRequest request) {
+        return ResponseEntity.ok(adminService.scanForFraud(request));
     }
 
     @PostMapping("/properties")

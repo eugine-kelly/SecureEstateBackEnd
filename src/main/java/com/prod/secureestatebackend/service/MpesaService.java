@@ -33,6 +33,11 @@ public class MpesaService {
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
 
+    // ─── Expose repo for controller ──────────────────────────────
+    public EscrowTransactionRepository getEscrowRepo() {
+        return escrowRepo;
+    }
+
     // ─── Auth Token ──────────────────────────────────────────────
 
     private String getAccessToken() {
@@ -40,16 +45,29 @@ public class MpesaService {
             String credentials = mpesaConfig.getConsumerKey() + ":" + mpesaConfig.getConsumerSecret();
             String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
 
+            log.info("Getting M-Pesa access token from: {}", mpesaConfig.getBaseUrl());
+            log.info("Using consumer key prefix: {}...",
+                    mpesaConfig.getConsumerKey().length() > 6 ? mpesaConfig.getConsumerKey().substring(0, 6) : "SHORT");
+
             String response = webClientBuilder.build()
                     .get()
                     .uri(mpesaConfig.getBaseUrl() + "/oauth/v1/generate?grant_type=client_credentials")
                     .header("Authorization", "Basic " + encoded)
+                    .header("Cache-Control", "no-cache")
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
 
+            log.info("Auth response: {}", response);
             JsonNode json = objectMapper.readTree(response);
-            return json.path("access_token").asText();
+            String token = json.path("access_token").asText();
+            if (token == null || token.isEmpty()) {
+                throw new RuntimeException("Empty access token received: " + response);
+            }
+            return token;
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            log.error("M-Pesa auth HTTP {} error: {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to authenticate with M-Pesa: " + e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("Failed to get M-Pesa access token: {}", e.getMessage());
             throw new RuntimeException("Failed to authenticate with M-Pesa");
@@ -100,11 +118,14 @@ public class MpesaService {
 
             if ("0".equals(responseCode)) {
                 // Save pending transaction
+                String buyerEmail = request.getBuyerEmail() != null
+                        ? request.getBuyerEmail() : "";
+
                 EscrowTransaction transaction = EscrowTransaction.builder()
                         .checkoutRequestId(checkoutRequestId)
                         .merchantRequestId(merchantRequestId)
                         .phoneNumber(phone)
-                        .buyerEmail(request.getBuyerEmail())
+                        .buyerEmail(buyerEmail)
                         .propertyId(request.getPropertyId())
                         .amount(request.getAmount())
                         .status(EscrowTransaction.EscrowStatus.PENDING)
@@ -113,7 +134,8 @@ public class MpesaService {
                         .build();
                 escrowRepo.save(transaction);
 
-                log.info("STK Push initiated for property {} — CheckoutRequestID: {}", request.getPropertyId(), checkoutRequestId);
+                log.info("STK Push initiated for property {} — CheckoutRequestID: {} — buyerEmail: {}",
+                        request.getPropertyId(), checkoutRequestId, buyerEmail);
 
                 return MpesaSTKResponse.builder()
                         .success(true)

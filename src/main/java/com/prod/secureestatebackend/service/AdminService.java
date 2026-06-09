@@ -1,9 +1,11 @@
 package com.prod.secureestatebackend.service;
 
+import com.prod.secureestatebackend.Entities.EscrowTransaction;
 import com.prod.secureestatebackend.Entities.Property;
 import com.prod.secureestatebackend.Entities.Role;
 import com.prod.secureestatebackend.Entities.User;
 import com.prod.secureestatebackend.dto.*;
+import com.prod.secureestatebackend.service.FraudDetectionService.FraudDetectionResult;
 import com.prod.secureestatebackend.exception.ResourceNotFoundException;
 import com.prod.secureestatebackend.repository.PropertyRepository;
 import com.prod.secureestatebackend.repository.UserRepository;
@@ -26,8 +28,9 @@ public class AdminService {
     private final UserRepository userRepository;
     private final PropertyRepository propertyRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final FraudDetectionService fraudDetectionService;
 
-    // ─── Dashboard Stats ────────────────────────────────────────
+    // ─── Dashboard Stats ─────────────────────────────────────────
 
     public AdminStatsResponse getStats() {
         long totalUsers = userRepository.count();
@@ -41,14 +44,14 @@ public class AdminService {
                 .totalUsers(totalUsers)
                 .totalProperties(totalProperties)
                 .verifiedProperties(verifiedProperties)
-                .totalRentals(0) // rentals are static for now
+                .totalRentals(0)
                 .buyerCount(buyerCount)
                 .sellerCount(sellerCount)
                 .agentCount(agentCount)
                 .build();
     }
 
-    // ─── User Management ────────────────────────────────────────
+    // ─── User Management ─────────────────────────────────────────
 
     public List<UserResponse> getAllUsers() {
         return userRepository.findAll()
@@ -60,33 +63,29 @@ public class AdminService {
     @Transactional
     public UserResponse changeUserRole(Long userId, String newRole) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
-
-        // Prevent changing to ADMIN via this endpoint
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "User not found with id: " + userId));
         Role role = switch (newRole.toUpperCase()) {
             case "SELLER" -> Role.SELLER;
-            case "AGENT" -> Role.AGENT;
-            default -> Role.BUYER;
+            case "AGENT"  -> Role.AGENT;
+            default       -> Role.BUYER;
         };
-
         user.setRole(role);
         userRepository.save(user);
-        log.info("Admin changed user {} role to {}", user.getEmail(), role);
         return mapToUserResponse(user);
     }
 
     @Transactional
     public UserResponse toggleUserBan(Long userId) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
-
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "User not found with id: " + userId));
         user.setEnabled(!user.isEnabled());
         userRepository.save(user);
-        log.info("Admin {} user: {}", user.isEnabled() ? "unbanned" : "banned", user.getEmail());
         return mapToUserResponse(user);
     }
 
-    // ─── Property Management ────────────────────────────────────
+    // ─── Property Management ─────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<PropertyResponse> getAllProperties() {
@@ -96,11 +95,33 @@ public class AdminService {
                 .collect(Collectors.toList());
     }
 
+    // Scan listing for fraud without saving
+    public FraudDetectionResult scanForFraud(PropertyRequest request) {
+        log.info("Running fraud scan for: {}", request.getTitle());
+        return fraudDetectionService.scanListing(request);
+    }
+
     @Transactional
     @CacheEvict(value = "verifiedProperties", allEntries = true)
     public PropertyResponse createProperty(PropertyRequest request, String adminEmail) {
         User admin = userRepository.findByEmail(adminEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Admin not found"));
+
+        // ── AI Fraud Scan ──────────────────────────────────────
+        FraudDetectionResult fraudResult = fraudDetectionService.scanListing(request);
+        log.info("Fraud scan — title: '{}' score: {} risk: {} approved: {}",
+                request.getTitle(), fraudResult.getFraudScore(),
+                fraudResult.getRiskLevel(), fraudResult.isApproved());
+
+        if (!fraudResult.isApproved()) {
+            throw new RuntimeException(
+                    "Listing rejected by AI fraud detection. " +
+                            "Risk Level: " + fraudResult.getRiskLevel() +
+                            " | Fraud Score: " + fraudResult.getFraudScore() + "/100" +
+                            " | Reason: " + fraudResult.getReasons()
+            );
+        }
+        // ──────────────────────────────────────────────────────
 
         Property property = Property.builder()
                 .title(request.getTitle())
@@ -114,7 +135,8 @@ public class AdminService {
                 .build();
 
         property = propertyRepository.save(property);
-        log.info("Admin created property: {}", property.getTitle());
+        log.info("Property created: '{}' (fraud score: {})",
+                property.getTitle(), fraudResult.getFraudScore());
         return mapToPropertyResponse(property);
     }
 
@@ -122,17 +144,15 @@ public class AdminService {
     @CacheEvict(value = "verifiedProperties", allEntries = true)
     public PropertyResponse updateProperty(Long propertyId, PropertyRequest request) {
         Property property = propertyRepository.findById(propertyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Property not found with id: " + propertyId));
-
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Property not found with id: " + propertyId));
         property.setTitle(request.getTitle());
         property.setLocation(request.getLocation());
         property.setPrice(request.getPrice());
         property.setType(request.getType());
         property.setDescription(request.getDescription());
         if (request.getImageUrl() != null) property.setImageUrl(request.getImageUrl());
-
         propertyRepository.save(property);
-        log.info("Admin updated property: {}", property.getTitle());
         return mapToPropertyResponse(property);
     }
 
@@ -140,24 +160,23 @@ public class AdminService {
     @CacheEvict(value = "verifiedProperties", allEntries = true)
     public void deleteProperty(Long propertyId) {
         Property property = propertyRepository.findById(propertyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Property not found with id: " + propertyId));
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Property not found with id: " + propertyId));
         propertyRepository.delete(property);
-        log.info("Admin deleted property id: {}", propertyId);
     }
 
     @Transactional
     @CacheEvict(value = "verifiedProperties", allEntries = true)
     public PropertyResponse toggleVerification(Long propertyId) {
         Property property = propertyRepository.findById(propertyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Property not found with id: " + propertyId));
-
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Property not found with id: " + propertyId));
         property.setArdhisasaVerified(!property.isArdhisasaVerified());
         propertyRepository.save(property);
-        log.info("Admin {} property: {}", property.isArdhisasaVerified() ? "verified" : "unverified", property.getTitle());
         return mapToPropertyResponse(property);
     }
 
-    // ─── Chat Logs ──────────────────────────────────────────────
+    // ─── Chat Logs ───────────────────────────────────────────────
 
     public List<String> getChatSessionKeys() {
         try {
@@ -179,7 +198,7 @@ public class AdminService {
         }
     }
 
-    // ─── Mappers ────────────────────────────────────────────────
+    // ─── Mappers ─────────────────────────────────────────────────
 
     private UserResponse mapToUserResponse(User u) {
         return UserResponse.builder()
@@ -202,7 +221,7 @@ public class AdminService {
                 .ardhisasaVerified(p.isArdhisasaVerified())
                 .description(p.getDescription())
                 .imageUrl(p.getImageUrl())
-                .ownerEmail(p.getOwner().getEmail())
+                .ownerEmail(p.getOwner() != null ? p.getOwner().getEmail() : "")
                 .build();
     }
 }
