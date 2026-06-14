@@ -75,7 +75,11 @@ public class SecurityConfig {
                             org.springframework.security.core.userdetails.UserDetails userDetails =
                                     userDetailsService.loadUserByUsername(email);
                             String token = jwtService.generateToken(userDetails);
-                            response.sendRedirect(frontendUrl + "/oauth2/callback?token=" + token);
+                            // Ensure no double slash
+                            String baseUrl = frontendUrl.endsWith("/")
+                                    ? frontendUrl.substring(0, frontendUrl.length() - 1)
+                                    : frontendUrl;
+                            response.sendRedirect(baseUrl + "/oauth2/callback?token=" + token);
                         })
                         .failureHandler((request, response, exception) -> {
                             response.sendRedirect(frontendUrl + "/login?error=oauth_failed");
