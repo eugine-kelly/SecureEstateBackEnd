@@ -24,15 +24,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handleGeneralException(Exception ex) {
-        // Log the FULL stack trace so we can see it in Render logs
         log.error("Unhandled exception: {}", ex.getMessage(), ex);
 
         Map<String, Object> body = new HashMap<>();
         body.put("timestamp", LocalDateTime.now());
         body.put("message", "Internal server error");
-        // TEMPORARY: include details for debugging - remove in final production
-        body.put("error", ex.getClass().getSimpleName());
-        body.put("detail", ex.getMessage());
         return new ResponseEntity<>(body, HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }
