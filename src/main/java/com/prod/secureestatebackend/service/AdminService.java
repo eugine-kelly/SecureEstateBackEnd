@@ -33,22 +33,27 @@ public class AdminService {
     // ─── Dashboard Stats ─────────────────────────────────────────
 
     public AdminStatsResponse getStats() {
-        long totalUsers = userRepository.count();
-        long totalProperties = propertyRepository.count();
-        long verifiedProperties = propertyRepository.findByArdhisasaVerifiedTrue().size();
-        long buyerCount = userRepository.countByRole(Role.BUYER);
-        long sellerCount = userRepository.countByRole(Role.SELLER);
-        long agentCount = userRepository.countByRole(Role.AGENT);
+        try {
+            long totalUsers = userRepository.count();
+            long totalProperties = propertyRepository.count();
+            long verifiedProperties = propertyRepository.findByArdhisasaVerifiedTrue().size();
+            long buyerCount = userRepository.countByRole(Role.BUYER);
+            long sellerCount = userRepository.countByRole(Role.SELLER);
+            long agentCount = userRepository.countByRole(Role.AGENT);
 
-        return AdminStatsResponse.builder()
-                .totalUsers(totalUsers)
-                .totalProperties(totalProperties)
-                .verifiedProperties(verifiedProperties)
-                .totalRentals(0)
-                .buyerCount(buyerCount)
-                .sellerCount(sellerCount)
-                .agentCount(agentCount)
-                .build();
+            return AdminStatsResponse.builder()
+                    .totalUsers(totalUsers)
+                    .totalProperties(totalProperties)
+                    .verifiedProperties(verifiedProperties)
+                    .totalRentals(0)
+                    .buyerCount(buyerCount)
+                    .sellerCount(sellerCount)
+                    .agentCount(agentCount)
+                    .build();
+        } catch (Exception e) {
+            log.error("Error fetching stats: {}", e.getMessage(), e);
+            throw e;
+        }
     }
 
     // ─── User Management ─────────────────────────────────────────
@@ -184,7 +189,7 @@ public class AdminService {
             if (keys == null) return List.of();
             return keys.stream().sorted().collect(Collectors.toList());
         } catch (Exception e) {
-            log.error("Error fetching chat session keys: {}", e.getMessage());
+            log.warn("Redis unavailable for chat sessions: {}", e.getMessage());
             return List.of();
         }
     }
@@ -193,7 +198,7 @@ public class AdminService {
         try {
             return redisTemplate.opsForValue().get("chat:session:" + sessionId);
         } catch (Exception e) {
-            log.error("Error fetching chat session: {}", e.getMessage());
+            log.warn("Redis unavailable for chat session: {}", e.getMessage());
             return null;
         }
     }
