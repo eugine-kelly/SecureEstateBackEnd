@@ -27,4 +27,10 @@ public class PropertyController {
     public ResponseEntity<List<PropertyResponse>> getVerified() {
         return ResponseEntity.ok(propertyService.getAllVerifiedProperties());
     }
+
+    // Single property by ID — needed for PropertyDetail page
+    @GetMapping("/{id}")
+    public ResponseEntity<PropertyResponse> getById(@PathVariable Long id) {
+        return ResponseEntity.ok(propertyService.getPropertyById(id));
+    }
 }

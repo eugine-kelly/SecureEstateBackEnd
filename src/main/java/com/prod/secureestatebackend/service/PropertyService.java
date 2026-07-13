@@ -4,6 +4,7 @@ import com.prod.secureestatebackend.Entities.Property;
 import com.prod.secureestatebackend.Entities.User;
 import com.prod.secureestatebackend.dto.PropertyRequest;
 import com.prod.secureestatebackend.dto.PropertyResponse;
+import com.prod.secureestatebackend.exception.ResourceNotFoundException;
 import com.prod.secureestatebackend.repository.PropertyRepository;
 import com.prod.secureestatebackend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +24,6 @@ public class PropertyService {
     private final PropertyRepository propertyRepository;
     private final UserRepository userRepository;
 
-    // Evict cache when a new property is created
     @Transactional
     @CacheEvict(value = "verifiedProperties", allEntries = true)
     public PropertyResponse createProperty(PropertyRequest request) {
@@ -45,7 +45,6 @@ public class PropertyService {
         return mapToResponse(property);
     }
 
-    // Cache results in Redis for 10 minutes (configured in RedisConfig)
     @Transactional(readOnly = true)
     @Cacheable(value = "verifiedProperties")
     public List<PropertyResponse> getAllVerifiedProperties() {
@@ -53,6 +52,14 @@ public class PropertyService {
                 .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    // Single property by ID — used by PropertyDetail page
+    @Transactional(readOnly = true)
+    public PropertyResponse getPropertyById(Long id) {
+        Property property = propertyRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Property not found with id: " + id));
+        return mapToResponse(property);
     }
 
     private PropertyResponse mapToResponse(Property p) {
@@ -65,7 +72,7 @@ public class PropertyService {
                 .ardhisasaVerified(p.isArdhisasaVerified())
                 .description(p.getDescription())
                 .imageUrl(p.getImageUrl())
-                .ownerEmail(p.getOwner().getEmail())
+                .ownerEmail(p.getOwner() != null ? p.getOwner().getEmail() : "")
                 .build();
     }
 }
